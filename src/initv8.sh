@@ -1,5 +1,6 @@
 # initv8.sh - initialize dev directory for embedded V8 development
 #
+# 08/08/2020 rlb move to new O/S, let's fix what don't work
 # 12/09/2019 rlb parameterize top directory name
 # 11/22/2019 rlb might know better what I'm doing now.
 # 11/19/2019 rlb half-assed start
@@ -16,6 +17,9 @@
 
 MYNAME="embedv8"     # in case I like a different name later
 SAVE_DIR="${PWD}"    # remember directory where we started
+
+
+
 
 # YesNo(): ask user yes/no question, return true if yes
 function YesNo() {
@@ -51,6 +55,9 @@ else
     EXIT_CMD="cd ${SAVE_DIR} ; exit"
 fi
 EXIT="eval ${EXIT_CMD}"
+
+
+
 
 #
 # Sanity check: must be run from either "$MYNAME" or "$MYNAME/src"
@@ -109,12 +116,32 @@ if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     export LIBRARY_PATH=${PWD}/v8/out/debug/obj:${PWD}/v8/out/debug
     export INCLUDE=${PWD}/v8/third_party/llvm-build/Release+Asserts/lib/clang/10.0.0/include
     export CPLUS_INCLUDE_PATH=${PWD}/v8/include:${PWD}/v8/buildtools/third_party/libc++/trunk/include
+    export V8=${PWD}/v8
     
     ${EXIT} 0
 fi
 
 # OK, we're not being "sourced", so user wants us to set up entire
 # v8 dev environment
+
+if ! command -v gn &> /dev/null
+then
+    echo "missing 'gn' command; maybe you forgot to source this file first."
+    $EXIT
+fi
+
+if ! command -v git &> /dev/null
+then
+    echo "install git first"
+    $EXIT
+fi
+if ! command -v python2.7 &> /dev/null
+then
+    echo "install python 2.7 first (at least, it was needed when I was written)"
+    $EXIT
+fi
+
+
 
 # instructions taken from: https://v8.dev/docs/source-code
 
@@ -158,7 +185,7 @@ fi
 # OK, now deal with v8
 # 
 if ! [ -d "v8" ]; then
-    echo "v8 dir doesn't exist. Going to try to load latest version."
+    echo "v8 dir doesn't exist. Going to try to fetch latest version."
     $DEPOT_PATH/fetch v8
     if ! [ -d "v8" ]; then
         echo "v8 directory still doesn't exist,"\
@@ -169,44 +196,52 @@ fi
 
 pushd v8
 
-# if YesNo  "v8 dir exists -- do you want me to update the checkout?"; then
-#     Branch=
-#     while IFS= read -r line; do
-#         Pattern="detached at (branch-heads/[0-9]+.[0-9]+)"
-#         if [[ $line =~ $Pattern ]]; then
-#             echo "Doing checkout of ${BASH_REMATCH[1]}"
-#             Branch="${BASH_REMATCH[1]}"
-#             break
-#         fi
-#     done < <(git branch)
-#     if [ "$Branch" = "" ]; then
-#         echo "Oh oh, couldn't find my detached head branch #! "
-#         ${EXIT} 1
-#     else
-#         git checkout $Branch
-#     fi
-# fi
-
 # let's generate our favorite build
-echo "Generate build info"
-declare -a GNARGS=(
-    "is_lsan=true"
-    "is_asan=true"
-    "is_debug=true"
-    'target_cpu="x64"'
-    "is_component_build=false"
-    "v8_monolithic=true"
-    "v8_use_external_startup_data=false"
-    "is_clang=true"
+if YesNo "Create debug build files?"; then
+    declare -a GNARGS=(
+        "is_lsan=true"
+        "is_asan=true"
+        "is_debug=true"
+        'target_cpu="x64"'
+        "is_component_build=false"   # not building shared library
+        "v8_monolithic=true"         # want one big library
+        "v8_use_external_startup_data=false"
+        "is_clang=true"
     )
-#gn gen out/debug --args='is_lsan=true is_asan=true is_debug=true target_cpu="x64" is_component_build=false v8_monolithic=true v8_use_external_startup_data=false is_clang=true'
-if YesNo "Create all the build files?"; then
-    echo gn gen out/debug --args="${GNARGS[@]}"
-    gn gen out/debug --args="${GNARGS[@]}"
-    if YesNo "Shall I go ahead and compile?"; then
+
+    # so much wrestling with quotes you wouldn't even believe...
+    declare Foo="${GNARGS[@]}"
+    printf -v Args "'%s'" "$Foo"
+    echo gn gen out/debug --args=$Args
+    eval gn gen out/debug --args=$Args
+
+    if YesNo "Shall I go ahead and compile the debug build?"; then
         echo "compile!"
         echo ninja -C out/debug
         ninja -C out/debug
+    fi
+elif YesNo "Create release build files?"; then
+    declare -a GNARGS=(
+        "is_lsan=true"
+        "is_asan=true"
+        "is_debug=false"
+        'target_cpu="x64"'
+        "is_component_build=true"   # not building shared library
+        "v8_use_external_startup_data=false"
+        "is_clang=true"
+        "v8_enable_verify_heap=true"
+    )
+
+    # so much wrestling with quotes you wouldn't even believe...
+    declare Foo="${GNARGS[@]}"
+    printf -v Args "'%s'" "$Foo"
+    echo gn gen out/release --args=$Args
+    eval gn gen out/release --args=$Args
+
+    if YesNo "Shall I go ahead and compile the release build?"; then
+        echo "compile!"
+        echo ninja -C out/release
+        ninja -C out/release
     fi
 fi
 popd
