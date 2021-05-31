@@ -1,5 +1,7 @@
+#! /bin/bash
 # initv8.sh - initialize dev directory for embedded V8 development
 #
+# 05/29/2021 rlb make it really work from scratch on clean system
 # 08/08/2020 rlb move to new O/S, let's fix what don't work
 # 12/09/2019 rlb parameterize top directory name
 # 11/22/2019 rlb might know better what I'm doing now.
@@ -18,31 +20,68 @@
 MYNAME="embedv8"     # in case I like a different name later
 SAVE_DIR="${PWD}"    # remember directory where we started
 
+SCRIPTDIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# load standard library of bash functions
+if ! [ -f bashable.sh ]; then
+    if ! type wget >/dev/null 2>/dev/null ; then
+        echo "bashable.sh does not exist and I have no wget command to fetch it."
+        quit 1
+    fi
+    if ! wget https://github.com/ronburk/bashable/raw/main/bashable.sh ; then
+        echo "bashable.sh does not exist and could not load it from github."
+        quit 1
+    fi
+fi
+if ! . bashable.sh ; then
+    echo "Got error exit when sourcing bashable.sh"
+    quit 1
+fi
 
 
 # YesNo(): ask user yes/no question, return true if yes
-function YesNo() {
-    declare -l Answer    # make a lower-casing variable
-    while true; do
-        read -p "$1 [Y/n]: " Answer
-        Answer=${Answer:-y}
-        case "$Answer" in
-            "y"|"yes"|"")
-                Answer="y"
-                break
-                ;;
-            "n"|"no")
-                Answer="n"
-                break
-                ;;
-        esac
-    done
-    if [ "$Answer" == "y" ]; then
-        return 0
-    else
-        return 1
+# function YesNo() {
+#     declare -l Answer    # make a lower-casing variable
+#     while true; do
+#         read -p "$1 [Y/n]: " Answer
+#         Answer=${Answer:-y}
+#         case "$Answer" in
+#             "y"|"yes"|"")
+#                 Answer="y"
+#                 break
+#                 ;;
+#             "n"|"no")
+#                 Answer="n"
+#                 break
+#                 ;;
+#         esac
+#     done
+#     if [ "$Answer" == "y" ]; then
+#         return 0
+#     else
+#         return 1
+#     fi
+# }
+
+function GlibCheck() {
+    if ! command glib-config &> /dev/null
+    then
+        echo "glib seems to not be installed."
+        echo "perhaps sudo apt-get install libglib2.0-dev"
+        $EXIT
     fi
+    }
+
+#GlibCheck
+
+function PythonCheck() {
+
+    if ! command -v python2.7 &> /dev/null
+    then
+        echo "install python 2.7 first (at least, it was needed when I was written)"
+        $EXIT
+    fi
+
 }
 
 
@@ -55,8 +94,6 @@ else
     EXIT_CMD="cd ${SAVE_DIR} ; exit"
 fi
 EXIT="eval ${EXIT_CMD}"
-
-
 
 
 #
@@ -86,12 +123,39 @@ DEPOT_PATH="$PWD/depot_tools"
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     # then user just wants us to export some bash variables
     
+    # but I can't find things for the PATH if you haven't installed yet
+    if ! [ -d "${DEPOT_PATH}" ]; then
+        echo "Can't find \"$DEPOT_PATH\". Please run this script before sourcing it."
+        $EXIT
+    fi
+    # now we will modify the path
     if ! [[ ":${PATH}:" == *":${DEPOT_PATH}:" ]]; then
         echo export PATH=${PATH}:${DEPOT_PATH}
         export PATH=${PATH}:${DEPOT_PATH}
     else
         echo "${DEPOT_PATH} already in PATH"
     fi
+    # the correct python seems to be a particular problem
+    # find path to python
+    PYTHON_PATHS=(${DEPOT_PATH}/*/python/bin/python)
+    PYTHON_PATH_COUNT=${#PYTHON_PATHS[@]}
+    if (( ${PYTHON_PATH_COUNT} == 0 )); then
+        echo "Couldn't find expected path to depot_tools python."
+        $EXIT
+    elif (( ${PYTHON_PATH_COUNT} > 1 )); then
+        echo "Found more than one candidate path to depot_tools python."
+        $EXIT
+    else
+        PYTHON_PATH=${PYTHON_PATHS[0]%/*}
+        if [[ ":${PATH}:" == *":${PYTHON_PATHS}:" ]]; then
+            echo "${PYTHON_PATH} already in path."
+        else
+            # put it in front of path in case user already defined conflicting python
+            echo export PATH=${PYTHON_PATH}:$PATH
+            export PATH=${PYTHON_PATH}:$PATH
+        fi
+    fi
+
     if alias gm 2>/dev/null >/dev/null ; then
         echo "'gm' alias already exists."
     else
@@ -124,11 +188,11 @@ fi
 # OK, we're not being "sourced", so user wants us to set up entire
 # v8 dev environment
 
-if ! command -v gn &> /dev/null
-then
-    echo "missing 'gn' command; maybe you forgot to source this file first."
-    $EXIT
-fi
+#if ! command -v gn &> /dev/null
+#then
+#    echo "missing 'gn' command; maybe you forgot to source this file first."
+#    $EXIT
+#fi
 
 if ! command -v git &> /dev/null
 then
@@ -140,8 +204,6 @@ then
     echo "install python 2.7 first (at least, it was needed when I was written)"
     $EXIT
 fi
-
-
 
 # instructions taken from: https://v8.dev/docs/source-code
 
@@ -185,7 +247,7 @@ fi
 # OK, now deal with v8
 # 
 if ! [ -d "v8" ]; then
-    echo "v8 dir doesn't exist. Going to try to fetch latest version."
+    echo "v8 dir doesn't exist. Going to try to fetch latest version of V8."
     $DEPOT_PATH/fetch v8
     if ! [ -d "v8" ]; then
         echo "v8 directory still doesn't exist,"\
@@ -198,6 +260,12 @@ pushd v8
 
 # let's generate our favorite build
 if YesNo "Create debug build files?"; then
+    if ! command -v gn &> /dev/null
+    then
+        echo "missing 'gn' command; maybe you forgot to source this file first (\". src/initv8.sh\")."
+        $EXIT
+    fi
+
     declare -a GNARGS=(
         "is_lsan=true"
         "is_asan=true"
